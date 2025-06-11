@@ -1,5 +1,6 @@
 // lib/login_screen.dart
 import 'dart:async';
+import 'package:flutter/foundation.dart' show kIsWeb; // <<< برای تشخیص پلتفرم وب
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
@@ -8,6 +9,7 @@ import 'chat_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_otp_text_field/flutter_otp_text_field.dart';
 import 'utils/app_notifications.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -21,7 +23,14 @@ class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _codeController = TextEditingController();
   final TextEditingController _firstNameController = TextEditingController();
   final TextEditingController _lastNameController = TextEditingController();
+  // --- controllers جدید برای تاریخ تولد ---
+  final TextEditingController _birthDayController = TextEditingController();
+  final TextEditingController _birthMonthController = TextEditingController();
+  final TextEditingController _birthYearController = TextEditingController();
+  // -----------------------------------------
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
+
+
   
   String? _authToken;
   bool _isLoading = false;
@@ -29,13 +38,43 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _showRegisterFields = false;
   String? _verificationPhone;
   Timer? _timer;
-int _start = 60; // 60 ثانیه
-bool _canResend = false;
+  int _start = 60;
+  bool _canResend = false;
+  String _deviceInfo = "Unknown"; 
 
   @override
   void initState() {
     super.initState();
     _checkSavedAuth();
+    _getDeviceInfo();
+  }
+
+   // --- تابع جدید برای دریافت اطلاعات دستگاه ---
+  Future<void> _getDeviceInfo() async {
+    DeviceInfoPlugin deviceInfoPlugin = DeviceInfoPlugin();
+    String info = "Unknown";
+    try {
+      if (kIsWeb) {
+        WebBrowserInfo webBrowserInfo = await deviceInfoPlugin.webBrowserInfo;
+        info = 'Web: ${webBrowserInfo.browserName.name} on ${webBrowserInfo.platform}';
+      } else {
+        // چون کد شما برای اندروید و iOS است، هر دو را در نظر می‌گیریم
+        if (Theme.of(context).platform == TargetPlatform.android) {
+            AndroidDeviceInfo androidInfo = await deviceInfoPlugin.androidInfo;
+            info = 'Android: ${androidInfo.model} (SDK ${androidInfo.version.sdkInt})';
+        } else if (Theme.of(context).platform == TargetPlatform.iOS) {
+            IosDeviceInfo iosInfo = await deviceInfoPlugin.iosInfo;
+            info = 'iOS: ${iosInfo.utsname.machine}';
+        }
+      }
+    } catch (e) {
+      info = "Error getting device info";
+    }
+    if(mounted) {
+      setState(() {
+        _deviceInfo = info;
+      });
+    }
   }
 
   void startTimer() {
@@ -110,7 +149,10 @@ bool _canResend = false;
     try {
       final response = await http.post(
         Uri.parse('https://shinap.ir/wp-json/user-phone/v1/check-user'),
-        body: {'phone': phoneNumber},
+        body: {
+          'phone': phoneNumber,
+          'device_info': _deviceInfo, // <<< ارسال اطلاعات دستگاه
+        },
       );
       
       final data = jsonDecode(response.body);
@@ -212,6 +254,8 @@ bool _canResend = false;
     setState(() {
       _isLoading = true;
     });
+
+    final birthDate = "${_birthYearController.text}/${_birthMonthController.text}/${_birthDayController.text}";
     
     try {
       final response = await http.post(
@@ -221,6 +265,7 @@ bool _canResend = false;
           'first_name': _firstNameController.text,
           'last_name': _lastNameController.text,
           'auth_token': _authToken,
+          'birth_date': birthDate, // <<< ارسال تاریخ تولد به API
         },
       );
       
@@ -268,6 +313,9 @@ bool _canResend = false;
     _codeController.dispose();
     _firstNameController.dispose();
     _lastNameController.dispose();
+    _birthDayController.dispose();
+    _birthMonthController.dispose();
+    _birthYearController.dispose();
     super.dispose();
   }
 
@@ -417,7 +465,7 @@ bool _canResend = false;
         )
       : Text(
           'ارسال مجدد کد تا $_start ثانیه دیگر',
-          style: const TextStyle(color: Colors.grey, fontFamily: 'Vazir'),
+          style: const TextStyle(color: Colors.grey, fontFamily: 'Vazir'),textAlign: TextAlign.center,
         ),
                         ],
                         
@@ -498,6 +546,30 @@ bool _canResend = false;
                               return null;
                             },
                           ),
+                          const SizedBox(height: 20),
+                          // --- فیلدهای تاریخ تولد ---
+                          const Text(
+                            'تاریخ تولد',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(fontFamily: 'Vazir', color: Colors.white70),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _buildBirthDateField(_birthYearController, 'سال', 4, 1300, 1400),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: _buildBirthDateField(_birthMonthController, 'ماه', 2, 1, 12),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: _buildBirthDateField(_birthDayController, 'روز', 2, 1, 31),
+                              ),
+                            ],
+                          ),
+                          // -------------------------
                           const SizedBox(height: 30),
                           ElevatedButton(
                             onPressed: _registerUser,
@@ -522,6 +594,44 @@ bool _canResend = false;
                 ),
         ),
       ),
+    );
+  }
+   // --- ویجت کمکی برای ساخت فیلدهای تاریخ تولد ---
+  Widget _buildBirthDateField(TextEditingController controller, String hint, int length, int min, int max) {
+    return TextFormField(
+      controller: controller,
+      textAlign: TextAlign.center,
+      keyboardType: TextInputType.number,
+      style: const TextStyle(fontSize: 16, fontFamily: 'VazirD'),
+      decoration: InputDecoration(
+        hintText: hint,
+        hintStyle: TextStyle(fontSize: 14, color: Colors.grey.shade500, fontFamily: 'Vazir'),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12.0)),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12.0),
+          borderSide: BorderSide(color: Colors.grey.shade700),
+        ),
+        filled: true,
+        fillColor: Colors.black.withOpacity(0.1),
+        contentPadding: const EdgeInsets.symmetric(vertical: 12),
+      ),
+      inputFormatters: [
+        FilteringTextInputFormatter.digitsOnly,
+        LengthLimitingTextInputFormatter(length),
+      ],
+      validator: (value) {
+        if (value == null || value.isEmpty) {
+          return 'ضروری';
+        }
+        final num = int.tryParse(value);
+        if (num == null) {
+          return 'عدد';
+        }
+        if (num < min || num > max) {
+          return 'نامعتبر';
+        }
+        return null;
+      },
     );
   }
 }

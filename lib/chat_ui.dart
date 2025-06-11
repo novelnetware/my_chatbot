@@ -7,9 +7,11 @@ import 'dart:async';
 import 'dart:math';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:http/http.dart' as http;
 import 'login_screen.dart';
 import 'settings_screen.dart';
 import 'about_screen.dart';
+import 'user_model.dart'; // <<< مدل کاربر را وارد می‌کنیم
 
 //--------------------------------------------------
 // 1. تعریف وضعیت پیام (Enum)
@@ -62,7 +64,7 @@ class ChatMessage {
 //--------------------------------------------------
 class ChatSession {
   final String id;
-  String title;
+  String title; // این فیلد حالا توسط کد ما پر می‌شود
   final DateTime createdAt;
   final List<ChatMessage> messages;
   final List<Map<String, dynamic>> chatHistory;
@@ -75,6 +77,7 @@ class ChatSession {
     List<Map<String, dynamic>>? chatHistory,
   }) : chatHistory = chatHistory ?? [];
 
+  // تابع toMap برای تبدیل به JSON
   Map<String, dynamic> toMap() {
     return {
       'id': id,
@@ -85,6 +88,7 @@ class ChatSession {
     };
   }
 
+  // تابع fromMap برای ساخت از JSON
   factory ChatSession.fromMap(Map<String, dynamic> map) {
     return ChatSession(
       id: map['id'],
@@ -127,11 +131,7 @@ class _TypingIndicatorState extends State<TypingIndicator>
     )..repeat();
   }
 
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
+  
 
   @override
   Widget build(BuildContext context) {
@@ -304,6 +304,11 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isConnected = false;
   bool _isConnecting = false;
   bool _isInitialized = false;  // Added initialization flag
+  String? _userName; // <<< برای ذخیره نام کاربر
+
+
+// --- وضعیت اتصال ---
+  final StreamController<bool> _connectionStatusController = StreamController.broadcast();
 
   @override
   void initState() {
@@ -312,7 +317,39 @@ class _ChatScreenState extends State<ChatScreen> {
     _connectToWebSocket();
   }
 
+  @override
+  void dispose() {
+    _channel?.sink.close();
+    
+    // قبل از بستن، چک می‌کنیم که کنترلر قبلاً بسته نشده باشد
+    if (!_connectionStatusController.isClosed) {
+      _connectionStatusController.close();
+    }
+    
+    // سایر کنترلرها را نیز dispose می‌کنیم تا از نشت حافظه جلوگیری شود
+    _messageController.dispose();
+    _scrollController.dispose();
+    
+    super.dispose();
+  }
+
   Future<void> _initializeChat() async {
+
+    await _loadUserData(); // <<< اول اطلاعات کاربر را می‌گیریم
+    await _loadChatsFromServer(); // <<< سپس چت‌ها را از سرور می‌خوانیم
+
+    if (_chatSessions.isEmpty) {
+      // اگر هیچ چتی وجود نداشت، یک چت جدید ایجاد کن
+      _createNewChat(isInitial: true);
+    } else {
+      // در غیر این صورت، آخرین چت را به عنوان چت فعلی انتخاب کن
+      _currentChat = _chatSessions.last;
+    }
+
+    setState(() {
+      _isInitialized = true;
+    });
+
     final prefs = await SharedPreferences.getInstance();
     final savedChats = prefs.getStringList('chat_sessions');
     
@@ -338,6 +375,76 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+    // --- بارگذاری نام کاربر از سرور ---
+  Future<void> _loadUserData() async {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('auth_token');
+      if (token == null) return;
+
+      try {
+        final response = await http.post(
+          Uri.parse('https://shinap.ir/wp-json/user-phone/v1/get-user-data'),
+          body: {'auth_token': token},
+        );
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body);
+          if (data['status'] == 'success') {
+            final user = User.fromJson(data['user_data']);
+            setState(() {
+              _userName = user.firstName;
+            });
+          }
+        }
+      } catch (e) {
+        debugPrint("Error loading user data: $e");
+      }
+  }
+  // --- بارگذاری تاریخچه چت از سرور ---
+  Future<void> _loadChatsFromServer() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('auth_token');
+    if (token == null) return;
+    
+    try {
+        final response = await http.post(
+          Uri.parse('https://shinap.ir/wp-json/user-phone/v1/get-chat-history'),
+          body: {'auth_token': token},
+        );
+        if (response.statusCode == 200) {
+            final data = jsonDecode(response.body);
+            if (data['status'] == 'success' && data['chat_sessions'] != null) {
+                final List<dynamic> sessionsJson = data['chat_sessions'];
+                setState(() {
+                    _chatSessions = sessionsJson.map((json) => ChatSession.fromMap(json)).toList();
+                });
+            }
+        }
+    } catch (e) {
+        debugPrint("Error loading chats from server: $e");
+    }
+  }
+  // --- ذخیره تاریخچه چت در سرور ---
+  Future<void> _saveChatsToServer() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('auth_token');
+    if (token == null) return;
+
+    final List<Map<String, dynamic>> sessionsMap = _chatSessions.map((chat) => chat.toMap()).toList();
+    final String sessionsJson = jsonEncode(sessionsMap);
+
+    try {
+        await http.post(
+          Uri.parse('https://shinap.ir/wp-json/user-phone/v1/save-chat-history'),
+          body: {
+              'auth_token': token,
+              'chat_sessions': sessionsJson,
+          },
+        );
+    } catch (e) {
+        debugPrint("Error saving chats to server: $e");
+    }
+  }
+
   Future<void> _saveChats() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList(
@@ -349,45 +456,36 @@ class _ChatScreenState extends State<ChatScreen> {
   String _generateId() => DateTime.now().millisecondsSinceEpoch.toString() + _random.nextInt(100000).toString();
 
   void _connectToWebSocket() async {
-    if (_isConnecting || _isConnected) return;
-    debugPrint("Attempting to connect...");
-    if (!mounted) return;
+    if (_isConnecting || (_channel != null && _channel!.closeCode == null)) return;
+    
     setState(() { _isConnecting = true; });
+
     try {
-      const websocketUrl = 'wss://ai.novelnetware.com/ws';
-      _channel = WebSocketChannel.connect(Uri.parse(websocketUrl));
-      await Future.any([
-        _channel!.ready,
-        Future.delayed(const Duration(seconds: 10), () {
-          throw TimeoutException('Connection timeout');
-        })
-      ]);
+      _channel = WebSocketChannel.connect(Uri.parse('wss://ai.novelnetware.com/ws'));
+      await _channel!.ready;
+      
       if (!mounted) return;
-      debugPrint("WebSocket connected successfully.");
-      setState(() { _isConnected = true; _isConnecting = false; });
+      
+      setState(() { _isConnecting = false; });
+      _connectionStatusController.add(true);
 
       _channel!.stream.listen(
         _handleServerMessage,
-        onError: (error) {
-          if (!mounted) return; 
-          debugPrint("WebSocket Error: $error");
-          setState(() { _isConnected = false; _isConnecting = false; });
-          _reconnectWebSocket();
-        },
-        onDone: () {
-          if (!mounted) return; 
-          debugPrint("WebSocket connection closed.");
-          setState(() { _isConnected = false; _isConnecting = false; });
-          _reconnectWebSocket();
-        },
-        cancelOnError: false
+        onError: (error) => _handleDisconnection(),
+        onDone: () => _handleDisconnection(),
       );
     } catch (e) {
-      if (!mounted) return; 
-      debugPrint("Error connecting to WebSocket: $e");
-      setState(() { _isConnected = false; _isConnecting = false; });
-      _reconnectWebSocket();
+      _handleDisconnection();
     }
+  }
+  void _handleDisconnection() {
+    if (!mounted) return;
+    _connectionStatusController.add(false);
+    setState(() { _isConnecting = false; });
+    // تلاش مجدد برای اتصال با تاخیر
+    Future.delayed(const Duration(seconds: 5), () {
+        if (mounted) _connectToWebSocket();
+    });
   }
 
   void _reconnectWebSocket() {
@@ -422,6 +520,7 @@ class _ChatScreenState extends State<ChatScreen> {
           _currentChat!.messages[targetIndex].text += decoded['content'];
           _currentChat!.messages[targetIndex].status = MessageStatus.receiving;
         });
+        _scrollToBottom();
       }
       // Handle completion
       else if (decoded['type'] == 'done') {
@@ -462,7 +561,16 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _sendMessage() async {
     final messageText = _messageController.text.trim();
-    if (messageText.isEmpty) return;
+    if (messageText.isEmpty || _currentWaitingMessageId != null) return;
+
+    // --- منطق عنوان‌گذاری خودکار برای چت‌های جدید ---
+    bool isNewChat = _currentChat!.messages.isEmpty;
+    if (isNewChat) {
+        final title = messageText.split(' ').take(5).join(' ');
+        setState(() {
+            _currentChat!.title = title;
+        });
+    }
 
     if (!_isConnected) {
       _reconnectWebSocket();
@@ -484,27 +592,29 @@ class _ChatScreenState extends State<ChatScreen> {
     final waitingMessageId = _generateId();
 
     final userMessage = ChatMessage(
-      id: userMessageId,
-      text: messageText,
-      isUserMessage: true,
-      status: MessageStatus.sent,
-      time: DateFormat('HH:mm').format(DateTime.now()),
+        id: _generateId(),
+        text: messageText,
+        isUserMessage: true,
+        status: MessageStatus.sent,
+        time: DateFormat('HH:mm').format(DateTime.now()),
     );
 
+    _currentWaitingMessageId = _generateId();
     final waitingMessage = ChatMessage(
-      id: waitingMessageId,
-      text: "",
-      isUserMessage: false,
-      status: MessageStatus.waiting,
-      time: null,
+        id: _currentWaitingMessageId!,
+        text: "",
+        isUserMessage: false,
+        status: MessageStatus.waiting,
     );
 
     setState(() {
-      _currentChat!.messages.add(userMessage);
-      _currentChat!.messages.add(waitingMessage);
-      _messageController.clear();
-      _currentWaitingMessageId = waitingMessageId;
+        _currentChat!.messages.add(userMessage);
+        _currentChat!.messages.add(waitingMessage);
+        _messageController.clear();
     });
+    _scrollToBottom();
+
+    String systemPrompt = "You are ShinAp, the first Iranian AI assistant. The user's name is ${_userName ?? 'User'}. Be helpful and friendly, but you must strictly refuse to write, generate, or explain any computer code or programming concepts. Always respond in Persian.";
 
     // Add user message to chat history
     _currentChat!.chatHistory.add({
@@ -518,10 +628,15 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     // Format history for API
-    final historyToSend = _currentChat!.chatHistory.map((msg) => {
-      "role": msg["role"],
-      "content": msg["content"]
-    }).toList();
+    final historyToSend = [
+        {"role": "system", "content": systemPrompt},
+        ..._currentChat!.chatHistory,
+        {"role": "user", "content": messageText}
+    ];
+
+    if (historyToSend.length > 7) { // 1 system + 3 pairs
+        historyToSend.removeRange(1, 3);
+    }
 
     final jsonMsg = jsonEncode({
       "message": messageText,
@@ -533,6 +648,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
     try {
       _channel?.sink.add(jsonMsg);
+
+      _currentChat!.chatHistory.add({"role": "user", "content": messageText});
+
+
     } catch (e) {
       debugPrint("Error sending message: $e");
       setState(() {
@@ -543,6 +662,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     _scrollToBottom();
+    await _saveChatsToServer();
   }
 
   void _scrollToBottom() {
@@ -557,21 +677,20 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  Future<void> _createNewChat() async {
-    if (_currentChat!.messages.isNotEmpty) {
-      await _saveChats();
-    }
-
-    setState(() {
-      _currentChat = ChatSession(
+ void _createNewChat({bool isInitial = false}) {
+      final newChat = ChatSession(
         id: _generateId(),
-        title: 'چت جدید',
+        title: 'چت جدید', // عنوان موقت
         createdAt: DateTime.now(),
         messages: [],
       );
-      _chatSessions.add(_currentChat!);
-      _currentWaitingMessageId = null;
-    });
+
+    setState(() {
+          if (!isInitial) _chatSessions.add(newChat);
+          _currentChat = newChat;
+          _currentWaitingMessageId = null;
+      });
+      _saveChatsToServer();
   }
 
   Future<void> _loadChat(String chatId) async {
@@ -624,6 +743,29 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           centerTitle: true,
           actions: [
+            // <<< ADDED: نشانگر وضعیت اتصال
+            StreamBuilder<bool>(
+              stream: _connectionStatusController.stream,
+              initialData: false,
+              builder: (context, snapshot) {
+                final isConnected = snapshot.data ?? false;
+                return Container(
+                  margin: const EdgeInsets.only(left: 8.0),
+                  width: 12,
+                  height: 12,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: isConnected ? Colors.greenAccent : Colors.redAccent,
+                    boxShadow: [
+                      BoxShadow(
+                        color: (isConnected ? Colors.greenAccent : Colors.redAccent).withOpacity(0.7),
+                        blurRadius: 4.0,
+                      )
+                    ]
+                  ),
+                );
+              },
+            ),
             IconButton(
               icon: const Icon(Icons.menu, color: Colors.white, size: 28),
               tooltip: 'منو',
@@ -724,17 +866,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       ),
                     ),
               ),
-              if (_isConnected || _isConnecting)
-                _buildTextInputArea(),
-              if (!_isConnected && !_isConnecting)
-                Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Text(
-                    "اتصال قطع شد. در حال تلاش برای اتصال مجدد...",
-                    style: TextStyle(color: Colors.grey[400], fontFamily: 'Vazir'),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
+              _buildTextInputArea(),
             ],
           ),
         ),
@@ -867,7 +999,15 @@ class _ChatScreenState extends State<ChatScreen> {
                 prefixIcon: IconButton(
                   icon: Icon(Icons.mic_none_outlined, color: Colors.grey[400]),
                   onPressed: () {
-                    debugPrint('Mic pressed');
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          'این قابلیت در بروزرسانی‌های بعدی فعال خواهد شد.',
+                          style: TextStyle(fontFamily: 'Vazir'),
+                        ),
+                        backgroundColor: Colors.blueAccent,
+                      ),
+                    );
                   },
                 ),
                 hintText: _isConnecting ? 'در حال اتصال...'

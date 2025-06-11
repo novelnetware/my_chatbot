@@ -460,20 +460,27 @@ class _ChatScreenState extends State<ChatScreen> {
     
     setState(() { _isConnecting = true; });
 
-    try {
-      _channel = WebSocketChannel.connect(Uri.parse('wss://ai.novelnetware.com/ws'));
-      await _channel!.ready;
-      
-      if (!mounted) return;
-      
-      setState(() { _isConnecting = false; });
-      _connectionStatusController.add(true);
+    // --- تغییرات از اینجا شروع می‌شود ---
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('auth_token');
 
-      _channel!.stream.listen(
-        _handleServerMessage,
-        onError: (error) => _handleDisconnection(),
-        onDone: () => _handleDisconnection(),
+    if (token == null) {
+      // اگر توکنی وجود نداشته باشد، امکان اتصال نیست
+      _handleDisconnection();
+      return;
+    }
+
+    try {
+      const websocketUrl = 'wss://ai.novelnetware.com/ws';
+      _channel = WebSocketChannel.connect(
+        Uri.parse(websocketUrl),
+        // ارسال توکن در هدر برای احراز هویت
+        
       );
+      
+      await _channel!.ready;
+
+   
     } catch (e) {
       _handleDisconnection();
     }

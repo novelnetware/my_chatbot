@@ -41,6 +41,10 @@ dependencies:
   flutter_svg: ^2.1.0
   shared_preferences: ^2.5.3
   shared_preferences_android: ^2.4.10
+  flutter_otp_text_field: ^1.5.1+1
+  http: ^1.4.0
+  device_info_plus: ^11.4.0
+  animated_text_kit: ^4.2.3
   
 
 dev_dependencies:

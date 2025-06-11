@@ -7,6 +7,9 @@ import 'dart:async';
 import 'dart:math';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'login_screen.dart';
+import 'settings_screen.dart';
+import 'about_screen.dart';
 
 //--------------------------------------------------
 // 1. تعریف وضعیت پیام (Enum)
@@ -659,30 +662,41 @@ class _ChatScreenState extends State<ChatScreen> {
                 }, 
               ),
               ListTile(
-                leading: const Icon(Icons.settings_outlined, color: Colors.white70), 
-                title: const Text('تنظیمات', style: TextStyle(color: Colors.white,fontFamily: 'Vazir')),
-                onTap: () { 
-                  debugPrint('Settings tapped'); 
-                  Navigator.pop(context);
-                }, 
-              ),
+  leading: const Icon(Icons.settings_outlined, color: Colors.white70),
+  title: const Text('تنظیمات', style: TextStyle(color: Colors.white,fontFamily: 'Vazir')),
+  onTap: () {
+    Navigator.pop(context); // ابتدا منو را ببندید
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (context) => const SettingsScreen()),
+    );
+  },
+),
               ListTile(
-                leading: const Icon(Icons.info_outline, color: Colors.white70), 
-                title: const Text('درباره', style: TextStyle(color: Colors.white,fontFamily: 'Vazir')),
-                onTap: () { 
-                  debugPrint('About tapped'); 
-                  Navigator.pop(context);
-                }, 
-              ),
+  leading: const Icon(Icons.info_outline, color: Colors.white70),
+  title: const Text('درباره ما', style: TextStyle(color: Colors.white,fontFamily: 'Vazir')),
+  onTap: () {
+    Navigator.pop(context);
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (context) => const AboutScreen()),
+    );
+  },
+),
               const Divider(color: Colors.white24, height: 20, thickness: 0.5, indent: 16, endIndent: 16),
               ListTile(
-                leading: const Icon(Icons.logout, color: Colors.redAccent), 
-                title: const Text('خروج', style: TextStyle(color: Colors.redAccent,fontFamily: 'Vazir')),
-                onTap: () { 
-                  debugPrint('Logout tapped'); 
-                  Navigator.pop(context);
-                }, 
-              ), 
+  leading: const Icon(Icons.logout, color: Colors.redAccent),
+  title: const Text('خروج', style: TextStyle(color: Colors.redAccent, fontFamily: 'Vazir')),
+  onTap: () async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('auth_token'); // پاک کردن توکن
+    await prefs.remove('chat_sessions'); // پاک کردن چت‌ها
+
+    // بازگشت به صفحه لاگین و حذف تمام صفحات قبلی
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (context) => const LoginScreen()),
+      (Route<dynamic> route) => false, // هیچ روت قبلی را نگه ندار
+    );
+  },
+), 
             ], 
           ), 
         ),

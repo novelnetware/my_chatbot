@@ -1,7 +1,8 @@
 // lib/splash_screen.dart
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'login_screen.dart'; // <<< مهم: به LoginScreen هدایت می‌کند
+import 'login_screen.dart';
+import 'package:animated_text_kit/animated_text_kit.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -10,51 +11,68 @@ class SplashScreen extends StatefulWidget {
   State<SplashScreen> createState() => _SplashScreenState();
 }
 
-class _SplashScreenState extends State<SplashScreen> {
-  bool _isVisible = false;
+class _SplashScreenState extends State<SplashScreen>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _scaleAnimation;
+  late Animation<double> _fadeAnimation;
 
   @override
   void initState() {
     super.initState();
-    Timer(const Duration(milliseconds: 300), () {
-      if (mounted) {
-        setState(() {
-          _isVisible = true;
-        });
-      }
-    });
 
-    Timer(const Duration(seconds: 3), () { // مجموع زمان نمایش
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 1500),
+      vsync: this,
+    );
+
+    _scaleAnimation = Tween<double>(begin: 0.5, end: 1.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeOut),
+    );
+
+    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeIn),
+    );
+
+    _controller.forward(); // شروع انیمیشن
+
+    Timer(const Duration(seconds: 3), () {
       if (mounted) {
-        setState(() {
-          _isVisible = false;
-        });
-        Timer(const Duration(milliseconds: 700), () { // زمان fade-out
-           if (mounted) {
-             // <<< تغییر ناوبری به LoginScreen >>>
-            Navigator.of(context).pushReplacement(
-              MaterialPageRoute(builder: (context) => const LoginScreen()), // به صفحه ورود برو
-            );
-           }
-        });
+        Navigator.of(context).pushReplacement(
+          PageRouteBuilder(
+            pageBuilder: (context, animation, secondaryAnimation) => const LoginScreen(),
+            transitionsBuilder: (context, animation, secondaryAnimation, child) {
+              return FadeTransition(opacity: animation, child: child);
+            },
+            transitionDuration: const Duration(milliseconds: 700),
+          ),
+        );
       }
     });
   }
 
   @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Color.fromRGBO(24, 30, 38, 1), // یا رنگ دلخواه تم شما
+      backgroundColor: const Color.fromRGBO(24, 30, 38, 1),
       body: Center(
-        child: AnimatedOpacity(
-          opacity: _isVisible ? 1.0 : 0.0,
-          duration: const Duration(milliseconds: 700),
-          child: SizedBox(
-            width: 150,
-            height: 150,
-            child: Image.asset(
-              'assets/Shinap.png', // مطمئن شوید لوگو در assets هست
-              fit: BoxFit.contain,
+        child: FadeTransition(
+          opacity: _fadeAnimation,
+          child: ScaleTransition(
+            scale: _scaleAnimation,
+            child: SizedBox(
+              width: 150,
+              height: 150,
+              child: Image.asset(
+                'assets/Shinap.png',
+                fit: BoxFit.contain,
+              ),
             ),
           ),
         ),

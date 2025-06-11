@@ -1,10 +1,13 @@
 // lib/login_screen.dart
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'chat_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_otp_text_field/flutter_otp_text_field.dart';
+import 'utils/app_notifications.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -25,12 +28,35 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _showCodeField = false;
   bool _showRegisterFields = false;
   String? _verificationPhone;
+  Timer? _timer;
+int _start = 60; // 60 ثانیه
+bool _canResend = false;
 
   @override
   void initState() {
     super.initState();
     _checkSavedAuth();
   }
+
+  void startTimer() {
+  _canResend = false;
+  _start = 60;
+  _timer = Timer.periodic(
+    const Duration(seconds: 1),
+    (Timer timer) {
+      if (_start == 0) {
+        setState(() {
+          _canResend = true;
+          timer.cancel();
+        });
+      } else {
+        setState(() {
+          _start--;
+        });
+      }
+    },
+  );
+}
 
   Future<void> _checkSavedAuth() async {
     final prefs = await SharedPreferences.getInstance();
@@ -90,6 +116,7 @@ class _LoginScreenState extends State<LoginScreen> {
       final data = jsonDecode(response.body);
       
       if (response.statusCode == 200) {
+        startTimer();
         if (data['status'] == 'codex') {
           // کاربر وجود دارد - درخواست کد تأیید
           setState(() {
@@ -97,24 +124,31 @@ class _LoginScreenState extends State<LoginScreen> {
             _verificationPhone = phoneNumber;
           });
         } else if (data['status'] == 'reg') {
+          startTimer();
           // کاربر جدید - کد ارسال شده
           setState(() {
             _showCodeField = true;
             _verificationPhone = phoneNumber;
           });
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('کد تأیید به شماره شما ارسال شد')),
-          );
+          AppNotifications.showSnackBar(
+  context,
+  'کد تأیید به شماره شما ارسال شد',
+  type: NotificationType.success,
+);
         }
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(data['message'] ?? 'خطا در ارتباط با سرور')),
-        );
+        AppNotifications.showSnackBar(
+    context,
+    'خطا در ارتباط با سرور',
+    type: NotificationType.error,
+  );
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('خطا در ارتباط با سرور')),
-      );
+      AppNotifications.showSnackBar(
+    context,
+    'خطا در ارتباط با سرور',
+    type: NotificationType.error,
+  );
     }
     
     setState(() {
@@ -131,12 +165,12 @@ class _LoginScreenState extends State<LoginScreen> {
     
     try {
       final response = await http.post(
-        Uri.parse('https://shinap.ir/wp-json/user-phone/v1/verify-code'),
-        body: {
-          'phone': _verificationPhone,
-          'code': _codeController.text,
-        },
-      );
+   Uri.parse('https://shinap.ir/wp-json/user-phone/v1/verify-code'),
+   body: {
+     'phone': _verificationPhone,
+     'code': _codeController.text, // این خط تغییر می‌کند
+   },
+ );
       
       final data = jsonDecode(response.body);
       
@@ -153,14 +187,18 @@ class _LoginScreenState extends State<LoginScreen> {
           });
         }
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(data['message'] ?? 'کد تأیید نامعتبر است')),
-        );
+        AppNotifications.showSnackBar(
+    context,
+    'کد تایید نامعتبر است',
+    type: NotificationType.error,
+  );
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('خطا در ارتباط با سرور')),
-      );
+      AppNotifications.showSnackBar(
+    context,
+    'خطا در ارتباط با سرور',
+    type: NotificationType.error,
+  );
     }
     
     setState(() {
@@ -192,14 +230,18 @@ class _LoginScreenState extends State<LoginScreen> {
         // ذخیره توکن و ورود به سیستم
         await _saveAuthTokenAndLogin(_authToken!);
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(data['message'] ?? 'خطا در ثبت نام')),
-        );
+        AppNotifications.showSnackBar(
+    context,
+    'خطا در ثبت نام کاربر',
+    type: NotificationType.error,
+  );
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('خطا در ارتباط با سرور')),
-      );
+      AppNotifications.showSnackBar(
+    context,
+    'خطا در ارتباط با سرور',
+    type: NotificationType.error,
+  );
     }
     
     setState(() {
@@ -221,6 +263,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   void dispose() {
+    _timer?.cancel();
     _phoneController.dispose();
     _codeController.dispose();
     _firstNameController.dispose();
@@ -319,57 +362,31 @@ class _LoginScreenState extends State<LoginScreen> {
                         
                         if (_showCodeField && !_showRegisterFields) ...[
                           // صفحه دوم - دریافت کد تأیید
-                          Text(
-                            'کد تأیید به شماره ${_verificationPhone} ارسال شد',
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(fontSize: 16),
-                          ),
+                           Text(
+    'کد تأیید به شماره ${_verificationPhone} ارسال شد',
+    textAlign: TextAlign.center,
+    style: const TextStyle(fontSize: 16, fontFamily: 'Vazir'),
+  ),
                           const SizedBox(height: 20),
-                          TextFormField(
-                            controller: _codeController,
-                            keyboardType: TextInputType.number,
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(fontSize: 16, letterSpacing: 2, fontFamily: 'VazirD'),
-                            decoration: InputDecoration(
-                              hintText: 'کد تأیید',
-                              hintStyle: TextStyle(
-                                fontSize: 18,
-                                color: Colors.grey.shade500,
-                                fontFamily: 'VazirD',
-                              ),
-                              prefixIcon: Icon(
-                                Icons.sms,
-                                color: Colors.grey.shade500,
-                              ),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12.0),
-                              ),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12.0),
-                                borderSide: BorderSide(color: Colors.grey.shade700),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12.0),
-                                borderSide: BorderSide(color: theme.colorScheme.primary, width: 1.5),
-                              ),
-                              filled: true,
-                              fillColor: Colors.black.withOpacity(0.1),
-                              contentPadding: const EdgeInsets.symmetric(vertical: 15),
-                            ),
-                            validator: (value) {
-                              if (value == null || value.isEmpty) {
-                                return 'لطفاً کد تأیید را وارد کنید';
-                              }
-                              if (value.length != 4) {
-                                return 'کد تأیید باید 4 رقم باشد';
-                              }
-                              return null;
-                            },
-                            inputFormatters: [
-                              FilteringTextInputFormatter.digitsOnly,
-                              LengthLimitingTextInputFormatter(4),
-                            ],
-                          ),
+  Directionality(
+    textDirection: TextDirection.ltr, // برای چیدمان صحیح باکس‌ها
+    child: OtpTextField(
+      numberOfFields: 4,
+      borderColor: const Color(0xFF512DA8),
+      showFieldAsBox: true,
+      fieldWidth: 50,
+      focusedBorderColor: theme.colorScheme.primary,
+      textStyle: const TextStyle(fontSize: 20, color: Colors.white),
+      onCodeChanged: (String code) {
+        // این تابع هر بار با تغییر کد فراخوانی می‌شود
+      },
+      // onSubmit کد را پس از پر شدن تمام فیلدها برمی‌گرداند
+      onSubmit: (String verificationCode) {
+        _codeController.text = verificationCode; // کد را در کنترلر ذخیره کن
+        _verifyCode(); // تابع تایید کد را فراخوانی کن
+      },
+    ),
+  ),
                           const SizedBox(height: 30),
                           ElevatedButton(
                             onPressed: _verifyCode,
@@ -383,10 +400,25 @@ class _LoginScreenState extends State<LoginScreen> {
                               elevation: 5,
                             ),
                             child: const Text(
-                              'تأیید کد',
-                              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w500, fontFamily: 'Vazir'),
-                            ),
+      'تأیید کد',
+      style: TextStyle(fontSize: 17, fontWeight: FontWeight.w500, fontFamily: 'Vazir'),
+    ),
                           ),
+                          const SizedBox(height: 20),
+  _canResend
+      ? TextButton(
+          onPressed: () {
+            _submitPhone(); // تابع ارسال شماره را دوباره صدا بزن
+          },
+          child: const Text(
+            'ارسال مجدد کد',
+            style: TextStyle(fontFamily: 'Vazir'),
+          ),
+        )
+      : Text(
+          'ارسال مجدد کد تا $_start ثانیه دیگر',
+          style: const TextStyle(color: Colors.grey, fontFamily: 'Vazir'),
+        ),
                         ],
                         
                         if (_showRegisterFields) ...[

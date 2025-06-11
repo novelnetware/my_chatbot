@@ -1,4 +1,4 @@
-package com.example.my_chatbot
+package com.novelnetware.shinap
 
 import io.flutter.embedding.android.FlutterActivity
 
